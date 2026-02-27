@@ -22,6 +22,7 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.security import sanitize_text
+from core.stream_display import LiveStreamDisplay
 
 
 # CLI commands for different providers
@@ -167,6 +168,9 @@ def run_resource_finder(
     completion_marker = work_dir / ".resource_finder_complete"
     start_time = time.time()
 
+    display = LiveStreamDisplay(stage="resource_finder", work_dir=work_dir)
+    display.start()
+
     try:
         with open(log_file, 'w') as log_f, open(transcript_file, 'w') as transcript_f:
             # Start process in workspace directory
@@ -191,9 +195,9 @@ def run_resource_finder(
             for line in iter(process.stdout.readline, ''):
                 if line:
                     sanitized_line = sanitize_text(line)
-                    print(sanitized_line, end='')
                     log_f.write(sanitized_line)
                     transcript_f.write(sanitized_line)
+                    display.consume_line(sanitized_line)
 
             # Wait for completion
             return_code = process.wait(timeout=timeout)
@@ -227,6 +231,8 @@ def run_resource_finder(
         print(f"\n❌ Error during resource finding: {e}")
         success = False
         raise
+    finally:
+        display.stop()
 
     # Verify outputs
     print()

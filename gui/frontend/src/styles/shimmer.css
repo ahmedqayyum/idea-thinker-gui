@@ -1,0 +1,131 @@
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+
+.skeleton-line {
+  background: linear-gradient(
+    90deg,
+    #DDD5CA 25%,
+    #EBE5DC 37%,
+    #DDD5CA 63%
+  );
+  background-size: 800px 100%;
+  animation: shimmer 1.5s infinite linear;
+  border-radius: 6px;
+}
+
+.skeleton-card {
+  background: #FFFFFF;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  padding: 20px;
+  width: 280px;
+  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.skeleton-card .skeleton-line.title {
+  height: 18px;
+  width: 70%;
+}
+
+.skeleton-card .skeleton-line.subtitle {
+  height: 14px;
+  width: 50%;
+}
+
+.skeleton-card .skeleton-line.metric {
+  height: 26px;
+  width: 40%;
+  margin-top: auto;
+}
+
+.skeleton-card .skeleton-line.badge {
+  height: 12px;
+  width: 30%;
+}
+
+.skeleton-edge {
+  stroke: #E8E0D4;
+  stroke-width: 2;
+  stroke-dasharray: 8 4;
+  animation: shimmer 1.5s infinite linear;
+}
+
+.fade-enter {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.fade-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 300ms ease, transform 300ms ease;
+}
+.fade-exit {
+  opacity: 1;
+}
+.fade-exit-active {
+  opacity: 0;
+  transition: opacity 300ms ease;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@keyframes card-appear {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.card-appear {
+  animation: card-appear 300ms ease-out;
+}
+
+@keyframes statusPulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(0.85);
+  }
+}
+
+.chat-message-content p {
+  margin: 0 0 8px 0;
+}
+.chat-message-content p:last-child {
+  margin-bottom: 0;
+}
+.chat-message-content code {
+  background: #F0EBE3;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.chat-message-content pre {
+  background: #1A1A1A;
+  color: #E8E0D4;
+  padding: 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 13px;
+  margin: 8px 0;
+}
+.chat-message-content pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+}

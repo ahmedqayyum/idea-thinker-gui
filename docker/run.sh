@@ -23,6 +23,19 @@ DIM='\033[2m'
 NC='\033[0m'
 
 # -----------------------------------------------------------------------------
+# Portable in-place sed helper (GNU + BSD/macOS)
+# -----------------------------------------------------------------------------
+sedi() {
+    local expr="$1"
+    local file="$2"
+    if sed --version >/dev/null 2>&1; then
+        sed -i "$expr" "$file"
+    else
+        sed -i '' "$expr" "$file"
+    fi
+}
+
+# -----------------------------------------------------------------------------
 # ASCII Art Banner
 # -----------------------------------------------------------------------------
 show_banner() {
@@ -184,11 +197,36 @@ get_workspace_dir() {
     local template_file="$PROJECT_ROOT/config/workspace.yaml.example"
     local parent_dir=""
 
+    # Parse parent_dir from YAML in a way that works on both GNU and BSD tools.
+    # We only need a simple "key: value" extraction from the first matching line.
+    parse_parent_dir() {
+        local file_path="$1"
+        awk '
+            /^[[:space:]]*parent_dir:[[:space:]]*/ {
+                value = $0
+                sub(/^[[:space:]]*parent_dir:[[:space:]]*/, "", value)
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+
+                # Strip optional surrounding single or double quotes
+                if (value ~ /^".*"$/) {
+                    sub(/^"/, "", value)
+                    sub(/"$/, "", value)
+                } else if (value ~ /^'\''.*'\''$/) {
+                    sub(/^'\''/, "", value)
+                    sub(/'\''$/, "", value)
+                }
+
+                print value
+                exit
+            }
+        ' "$file_path"
+    }
+
     # Try user config first, then template
     if [ -f "$config_file" ]; then
-        parent_dir=$(grep -E '^\s*parent_dir:' "$config_file" | sed 's/.*parent_dir:\s*["'\'']\?\([^"'\'']*\)["'\'']\?.*/\1/' | tr -d ' ')
+        parent_dir=$(parse_parent_dir "$config_file")
     elif [ -f "$template_file" ]; then
-        parent_dir=$(grep -E '^\s*parent_dir:' "$template_file" | sed 's/.*parent_dir:\s*["'\'']\?\([^"'\'']*\)["'\'']\?.*/\1/' | tr -d ' ')
+        parent_dir=$(parse_parent_dir "$template_file")
     fi
 
     # Default to ./workspaces if not found or empty
@@ -571,9 +609,9 @@ config_set_env() {
     local var_name="$1"
     local value="$2"
     if grep -q "^${var_name}=" "$PROJECT_ROOT/.env" 2>/dev/null; then
-        sed -i "s|^${var_name}=.*|${var_name}=${value}|" "$PROJECT_ROOT/.env"
+        sedi "s|^${var_name}=.*|${var_name}=${value}|" "$PROJECT_ROOT/.env"
     elif grep -q "^# *${var_name}=" "$PROJECT_ROOT/.env" 2>/dev/null; then
-        sed -i "s|^# *${var_name}=.*|${var_name}=${value}|" "$PROJECT_ROOT/.env"
+        sedi "s|^# *${var_name}=.*|${var_name}=${value}|" "$PROJECT_ROOT/.env"
     else
         echo "${var_name}=${value}" >> "$PROJECT_ROOT/.env"
     fi
@@ -624,9 +662,9 @@ prompt_secret() {
 
     # Write to .env
     if grep -q "^${env_var}=" "$PROJECT_ROOT/.env" 2>/dev/null; then
-        sed -i "s|^${env_var}=.*|${env_var}=${value}|" "$PROJECT_ROOT/.env"
+        sedi "s|^${env_var}=.*|${env_var}=${value}|" "$PROJECT_ROOT/.env"
     elif grep -q "^# *${env_var}=" "$PROJECT_ROOT/.env" 2>/dev/null; then
-        sed -i "s|^# *${env_var}=.*|${env_var}=${value}|" "$PROJECT_ROOT/.env"
+        sedi "s|^# *${env_var}=.*|${env_var}=${value}|" "$PROJECT_ROOT/.env"
     else
         echo "${env_var}=${value}" >> "$PROJECT_ROOT/.env"
     fi
@@ -907,9 +945,9 @@ setup_env_interactive() {
         "Repos will be created under this org. Leave empty to use your personal account."
     if [ -n "$REPLY" ]; then
         if grep -q "^GITHUB_ORG=" "$PROJECT_ROOT/.env" 2>/dev/null; then
-            sed -i "s|^GITHUB_ORG=.*|GITHUB_ORG=$REPLY|" "$PROJECT_ROOT/.env"
+            sedi "s|^GITHUB_ORG=.*|GITHUB_ORG=$REPLY|" "$PROJECT_ROOT/.env"
         elif grep -q "^# *GITHUB_ORG=" "$PROJECT_ROOT/.env" 2>/dev/null; then
-            sed -i "s|^# *GITHUB_ORG=.*|GITHUB_ORG=$REPLY|" "$PROJECT_ROOT/.env"
+            sedi "s|^# *GITHUB_ORG=.*|GITHUB_ORG=$REPLY|" "$PROJECT_ROOT/.env"
         else
             echo "GITHUB_ORG=$REPLY" >> "$PROJECT_ROOT/.env"
         fi
@@ -929,7 +967,7 @@ setup_env_interactive() {
         if [ ! -f "$ws_config" ] && [ -f "$PROJECT_ROOT/config/workspace.yaml.example" ]; then
             cp "$PROJECT_ROOT/config/workspace.yaml.example" "$ws_config"
         fi
-        sed -i "s|parent_dir:.*|parent_dir: \"$REPLY\"|" "$ws_config"
+        sedi "s|parent_dir:.*|parent_dir: \"$REPLY\"|" "$ws_config"
         echo -e "    ${GREEN}[OK]${NC} Workspace directory set to $REPLY"
     else
         echo -e "    ${DIM}[OK]${NC} Using default: ./workspaces"
@@ -1066,7 +1104,7 @@ cmd_config() {
                     if [ ! -f "$ws_config" ] && [ -f "$PROJECT_ROOT/config/workspace.yaml.example" ]; then
                         cp "$PROJECT_ROOT/config/workspace.yaml.example" "$ws_config"
                     fi
-                    sed -i "s|parent_dir:.*|parent_dir: \"$REPLY\"|" "$ws_config"
+                    sedi "s|parent_dir:.*|parent_dir: \"$REPLY\"|" "$ws_config"
                     echo -e "    ${GREEN}[OK]${NC} Workspace directory set to $REPLY"
                 else
                     echo -e "    ${DIM}[SKIP]${NC} No change"

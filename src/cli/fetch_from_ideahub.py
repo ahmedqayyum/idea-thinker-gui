@@ -539,6 +539,17 @@ def main():
         default=3600,
         help="Timeout for paper writing in seconds (default: 3600)"
     )
+    parser.add_argument(
+        "--revise-paper-from-review",
+        action="store_true",
+        help="After --write-paper, run reviewer-guided revision pass on paper draft"
+    )
+    parser.add_argument(
+        "--paper-revision-timeout",
+        type=int,
+        default=2400,
+        help="Timeout for reviewer-guided paper revision in seconds (default: 2400)"
+    )
 
     args = parser.parse_args()
 
@@ -550,6 +561,9 @@ def main():
     # Validate --write-paper requires --run
     if args.write_paper and not args.run:
         print("❌ Error: --write-paper requires --run flag")
+        sys.exit(1)
+    if args.revise_paper_from_review and not args.write_paper:
+        print("❌ Error: --revise-paper-from-review requires --write-paper")
         sys.exit(1)
 
     # Validate URL
@@ -690,8 +704,10 @@ def main():
                     full_permissions=args.full_permissions,
                     multi_agent=True,
                     write_paper=args.write_paper,
+                    revise_paper_from_review=args.revise_paper_from_review,
                     paper_style=args.paper_style,
                     paper_timeout=args.paper_timeout,
+                    paper_revision_timeout=args.paper_revision_timeout,
                     private=args.private
                 )
 

@@ -75,8 +75,54 @@ def main():
         action="store_true",
         help="Skip random hash in repo name (use {slug}-{provider} instead of {slug}-{hash}-{provider})"
     )
+    parser.add_argument(
+        "--run",
+        action="store_true",
+        help="Immediately run research after submission"
+    )
+    parser.add_argument(
+        "--full-permissions",
+        action="store_true",
+        help="Allow full permissions to CLI agents (claude: --dangerously-skip-permissions, others: --yolo)"
+    )
+    parser.add_argument(
+        "--write-paper",
+        action="store_true",
+        help="Generate paper draft after experiments complete (requires --run)"
+    )
+    parser.add_argument(
+        "--paper-style",
+        default=None,
+        choices=["neurips", "icml", "acl", "ams"],
+        help="Paper style template (default: auto-detect from domain, or neurips)"
+    )
+    parser.add_argument(
+        "--paper-timeout",
+        type=int,
+        default=3600,
+        help="Timeout for paper writing in seconds (default: 3600)"
+    )
+    parser.add_argument(
+        "--revise-paper-from-review",
+        action="store_true",
+        help="After --write-paper, run reviewer-guided revision pass on paper draft"
+    )
+    parser.add_argument(
+        "--paper-revision-timeout",
+        type=int,
+        default=2400,
+        help="Timeout for reviewer-guided paper revision in seconds (default: 2400)"
+    )
 
     args = parser.parse_args()
+
+    # Validate --write-paper requires --run
+    if args.write_paper and not args.run:
+        print("❌ Error: --write-paper requires --run flag")
+        sys.exit(1)
+    if args.revise_paper_from_review and not args.write_paper:
+        print("❌ Error: --revise-paper-from-review requires --write-paper")
+        sys.exit(1)
 
     idea_path = Path(args.idea_file)
 
@@ -214,23 +260,71 @@ def main():
                 print(f"\n⚠️  GITHUB_TOKEN not set")
                 print("   Set it in .env file or export GITHUB_TOKEN=your_token")
 
-        # Final instructions
-        print("\n" + "=" * 80)
-        print("NEXT STEPS")
-        print("=" * 80)
+        # Optionally run research immediately
+        if args.run:
+            print("\n" + "=" * 80)
+            print("RUNNING RESEARCH")
+            print("=" * 80)
 
-        if workspace_path:
-            print(f"\n1. (Optional) Add resources to workspace:")
-            print(f"   cd {workspace_path}")
-            print(f"   # Add datasets, documents, etc.")
-            print(f"\n2. Run the research:")
-            print(f"   python src/core/runner.py {idea_id}")
-            print(f"\n   Results will be pushed to: {github_repo_url}")
-        else:
-            print(f"\nRun the research:")
-            print(f"  python src/core/runner.py {idea_id}")
+            try:
+                from core.runner import ResearchRunner
 
-        print()
+                runner = ResearchRunner(
+                    use_github=not args.no_github,
+                    github_org=args.github_org
+                )
+
+                provider = args.provider or "claude"
+                print(f"\n🤖 Starting research with provider: {provider}")
+
+                run_result = runner.run_research(
+                    idea_id=idea_id,
+                    provider=provider,
+                    timeout=3600,
+                    full_permissions=args.full_permissions,
+                    multi_agent=True,
+                    write_paper=args.write_paper,
+                    revise_paper_from_review=args.revise_paper_from_review,
+                    paper_style=args.paper_style,
+                    paper_timeout=args.paper_timeout,
+                    paper_revision_timeout=args.paper_revision_timeout,
+                    private=args.private
+                )
+
+                print("\n" + "=" * 80)
+                if run_result.get('success'):
+                    print("✅ RESEARCH COMPLETED SUCCESSFULLY")
+                else:
+                    print("⚠️  RESEARCH COMPLETED (with issues)")
+                print(f"   Location: {run_result['work_dir']}")
+                if run_result.get('github_url'):
+                    print(f"   GitHub: {run_result['github_url']}")
+                print("=" * 80)
+
+            except Exception as e:
+                print(f"\n❌ Research execution failed: {e}")
+                print(f"   You can retry with: python src/core/runner.py {idea_id}")
+
+        # Final instructions (only show if we didn't already run)
+        if not args.run:
+            print("\n" + "=" * 80)
+            print("NEXT STEPS")
+            print("=" * 80)
+
+            if workspace_path:
+                print(f"\n1. (Optional) Add resources to workspace:")
+                print(f"   cd {workspace_path}")
+                print(f"   # Add datasets, documents, etc.")
+                provider_str = f" --provider {args.provider}" if args.provider else ""
+                print(f"\n2. Run the research:")
+                print(f"   python src/core/runner.py {idea_id}{provider_str}")
+                print(f"\n   Results will be pushed to: {github_repo_url}")
+            else:
+                provider_str = f" --provider {args.provider}" if args.provider else ""
+                print(f"\nRun the research:")
+                print(f"  python src/core/runner.py {idea_id}{provider_str}")
+
+            print()
 
     except Exception as e:
         print(f"\n❌ Error submitting idea: {e}", file=sys.stderr)

@@ -18,6 +18,7 @@ import time
 
 from agents.resource_finder import run_resource_finder
 from templates.research_agent_instructions import generate_instructions
+from core.stream_display import LiveStreamDisplay
 
 
 class PipelineState:
@@ -331,6 +332,7 @@ class ResearchPipelineOrchestrator:
         import shlex
         import os
         from core.security import sanitize_text
+        display = None
 
         try:
             # Generate prompt (without Phase 0, resource-aware)
@@ -411,6 +413,9 @@ class ResearchPipelineOrchestrator:
             success = False
             start_time = time.time()
 
+            display = LiveStreamDisplay(stage="experiment_runner", work_dir=self.work_dir)
+            display.start()
+
             with open(log_file, 'w') as log_f, open(transcript_file, 'w') as transcript_f:
                 process = subprocess.Popen(
                     shlex.split(cmd),
@@ -433,9 +438,9 @@ class ResearchPipelineOrchestrator:
                 for line in iter(process.stdout.readline, ''):
                     if line:
                         sanitized_line = sanitize_text(line)
-                        print(sanitized_line, end='')
                         log_f.write(sanitized_line)
                         transcript_f.write(sanitized_line)
+                        display.consume_line(sanitized_line)
 
                 # Wait for completion
                 return_code = process.wait(timeout=timeout)
@@ -477,6 +482,9 @@ class ResearchPipelineOrchestrator:
             result = {'success': False, 'error': str(e)}
             self.state.complete_stage('experiment_runner', False, result)
             raise
+        finally:
+            if display is not None:
+                display.stop()
 
     def get_pipeline_status(self) -> Dict[str, Any]:
         """Get current pipeline execution status."""

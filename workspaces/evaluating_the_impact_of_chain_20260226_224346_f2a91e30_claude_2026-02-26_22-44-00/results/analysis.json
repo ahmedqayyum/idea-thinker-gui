@@ -1,0 +1,94 @@
+{
+  "direct": {
+    "n_correct": 80,
+    "n_total": 90,
+    "accuracy": 0.8888888888888888,
+    "accuracy_pct": 88.89,
+    "ci_95": [
+      80.74,
+      93.85
+    ],
+    "by_difficulty": {
+      "easy": 1.0,
+      "hard": 0.8,
+      "medium": 1.0
+    },
+    "by_operation": {
+      "+": 1.0,
+      "-": 1.0,
+      "*": 0.8461538461538461,
+      "multi_step": 0.6470588235294118
+    }
+  },
+  "zeroshot": {
+    "n_correct": 90,
+    "n_total": 90,
+    "accuracy": 1.0,
+    "accuracy_pct": 100.0,
+    "ci_95": [
+      95.91,
+      100.0
+    ],
+    "by_difficulty": {
+      "easy": 1.0,
+      "hard": 1.0,
+      "medium": 1.0
+    },
+    "by_operation": {
+      "+": 1.0,
+      "-": 1.0,
+      "*": 1.0,
+      "multi_step": 1.0
+    }
+  },
+  "fewshot": {
+    "n_correct": 90,
+    "n_total": 90,
+    "accuracy": 1.0,
+    "accuracy_pct": 100.0,
+    "ci_95": [
+      95.91,
+      100.0
+    ],
+    "by_difficulty": {
+      "easy": 1.0,
+      "hard": 1.0,
+      "medium": 1.0
+    },
+    "by_operation": {
+      "+": 1.0,
+      "-": 1.0,
+      "*": 1.0,
+      "multi_step": 1.0
+    }
+  },
+  "mcnemar": {
+    "direct_vs_zeroshot": {
+      "p_value": 0.0044,
+      "statistic": 8.1,
+      "b_count": 10,
+      "c_count": 0,
+      "cohens_h": 0.6797,
+      "significant": "True",
+      "significant_bonferroni": "True"
+    },
+    "direct_vs_fewshot": {
+      "p_value": 0.0044,
+      "statistic": 8.1,
+      "b_count": 10,
+      "c_count": 0,
+      "cohens_h": 0.6797,
+      "significant": "True",
+      "significant_bonferroni": "True"
+    },
+    "zeroshot_vs_fewshot": {
+      "p_value": 1.0,
+      "statistic": 0.0,
+      "b_count": 0,
+      "c_count": 0,
+      "cohens_h": 0.0,
+      "significant": false,
+      "significant_bonferroni": false
+    }
+  }
+}

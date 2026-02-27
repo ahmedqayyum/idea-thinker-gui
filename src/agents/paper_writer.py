@@ -319,6 +319,152 @@ def run_paper_writer(
         }
 
 
+def _build_paper_revision_prompt(work_dir: Path, style: str, quality_report: str, draft_tex: str) -> str:
+    """Build a focused prompt to revise an existing draft using reviewer feedback."""
+    return f"""You are revising an existing research paper draft using reviewer feedback.
+
+WORKSPACE: {work_dir}
+STYLE: {style}
+
+Your job is to improve the paper draft quality and scientific rigor while preserving truthful claims.
+
+Inputs:
+1) Reviewer report (quality_report.md):
+{quality_report}
+
+2) Current paper draft (paper_draft/main.tex):
+{draft_tex}
+
+Required actions:
+- Read the reviewer report carefully and identify the highest-priority weaknesses.
+- Revise paper_draft/main.tex to directly address those weaknesses.
+- Improve methodological clarity, limitations discussion, and threat-to-validity framing.
+- Strengthen experimental narrative and discussion of evidence where possible without fabricating results.
+- Improve writing clarity and structure.
+- Keep claims consistent with available evidence. Do not invent datasets/results.
+
+Output requirements:
+- Update paper_draft/main.tex in place.
+- Ensure the LaTeX document remains compilable.
+- At the end, provide a short plain-text changelog with:
+  1) what was changed,
+  2) which reviewer concerns were addressed,
+  3) which concerns remain unresolved due to missing evidence.
+"""
+
+
+def run_paper_revision_from_quality_report(
+    work_dir: Path,
+    provider: str = "claude",
+    style: str = "neurips",
+    timeout: int = 2400,
+    full_permissions: bool = True
+) -> Dict[str, Any]:
+    """
+    Run a paper revision pass guided by quality_report.md.
+
+    This is intended to run after paper generation and quality evaluation.
+    """
+    print("🔧 Starting paper revision from reviewer feedback")
+    print(f"   Provider: {provider}")
+    print(f"   Workspace: {work_dir}")
+
+    draft_dir = work_dir / "paper_draft"
+    draft_tex_path = draft_dir / "main.tex"
+    quality_path = work_dir / "quality_report.md"
+
+    if not quality_path.exists():
+        return {
+            "success": False,
+            "draft_dir": str(draft_dir),
+            "error": "quality_report.md not found",
+        }
+    if not draft_tex_path.exists():
+        return {
+            "success": False,
+            "draft_dir": str(draft_dir),
+            "error": "paper_draft/main.tex not found",
+        }
+
+    quality_report = quality_path.read_text(encoding="utf-8", errors="replace")
+    draft_tex = draft_tex_path.read_text(encoding="utf-8", errors="replace")
+    prompt = _build_paper_revision_prompt(work_dir, style, quality_report, draft_tex)
+
+    logs_dir = work_dir / "logs"
+    logs_dir.mkdir(exist_ok=True)
+    (logs_dir / "paper_revision_prompt.txt").write_text(prompt, encoding="utf-8")
+
+    cmd = CLI_COMMANDS.get(provider, "claude -p")
+    if full_permissions:
+        if provider == "codex":
+            cmd += " --yolo"
+        elif provider == "claude":
+            cmd += " --dangerously-skip-permissions"
+        elif provider == "gemini":
+            cmd += " --yolo"
+
+    if provider == "claude":
+        cmd += " --verbose --output-format stream-json"
+    elif provider == "codex":
+        cmd += " --json"
+    elif provider == "gemini":
+        cmd += " --output-format stream-json"
+
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    log_file = logs_dir / f"paper_revision_{provider}.log"
+
+    try:
+        with open(log_file, "w") as log_f:
+            process = subprocess.Popen(
+                shlex.split(cmd),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env=env,
+                text=True,
+                cwd=str(work_dir),
+            )
+
+            process.stdin.write(prompt)
+            process.stdin.close()
+
+            for line in iter(process.stdout.readline, ""):
+                if line:
+                    print(line, end="")
+                    log_f.write(line)
+
+            return_code = process.wait(timeout=timeout)
+
+        success = return_code == 0
+        if success:
+            print("\n✅ Paper revision completed!")
+        else:
+            print(f"\n❌ Paper revision failed with code {return_code}")
+
+        return {
+            "success": success,
+            "draft_dir": str(draft_dir),
+            "log_file": str(log_file),
+            "return_code": return_code,
+        }
+    except subprocess.TimeoutExpired:
+        process.kill()
+        return {
+            "success": False,
+            "draft_dir": str(draft_dir),
+            "log_file": str(log_file),
+            "error": "timeout",
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "draft_dir": str(draft_dir),
+            "log_file": str(log_file),
+            "error": str(e),
+        }
+
+
 if __name__ == "__main__":
     import argparse
 

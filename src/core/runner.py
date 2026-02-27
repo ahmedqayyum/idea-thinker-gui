@@ -24,6 +24,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from core.idea_manager import IdeaManager
 from core.config_loader import ConfigLoader
 from core.security import sanitize_text
+from core.quality_evaluator import QualityEvaluator
+from core.stream_display import LiveStreamDisplay
 from templates.prompt_generator import PromptGenerator
 from templates.research_agent_instructions import generate_instructions
 
@@ -106,13 +108,16 @@ class ResearchRunner:
                     timeout: int = 3600,
                     full_permissions: bool = False,
                     multi_agent: bool = True,
+                    quality_only: bool = False,
                     pause_after_resources: bool = False,
                     skip_resource_finder: bool = False,
                     resource_finder_timeout: int = 2700,
                     use_scribe: bool = False,
                     write_paper: bool = False,
+                    revise_paper_from_review: bool = False,
                     paper_style: str = None,
                     paper_timeout: int = 3600,
+                    paper_revision_timeout: int = 2400,
                     no_hash: bool = False,
                     private: bool = False) -> Dict[str, Any]:
         """
@@ -127,13 +132,16 @@ class ResearchRunner:
             timeout: Maximum execution time in seconds (for experiment runner)
             full_permissions: Allow full permissions to CLI agents (default: False)
             multi_agent: Use multi-agent pipeline (default: True)
+            quality_only: Only run quality evaluation and finalize/push (default: False)
             pause_after_resources: Pause for human review after resource finding (default: False)
             skip_resource_finder: Skip resource finder stage (default: False)
             resource_finder_timeout: Timeout for resource finder in seconds (default: 45 min)
             use_scribe: Use scribe for notebook integration (default: False, raw CLI)
             write_paper: Generate paper draft after experiments (default: False)
+            revise_paper_from_review: Run paper revision pass using quality report feedback
             paper_style: Paper template style (neurips, icml, acl, ams). None = auto-detect from domain
             paper_timeout: Timeout for paper writing in seconds
+            paper_revision_timeout: Timeout for paper revision in seconds
 
         Returns:
             Dictionary with:
@@ -280,7 +288,22 @@ class ResearchRunner:
         # Copy helper scripts to workspace
         self._copy_workspace_resources(work_dir)
 
+        # QUALITY-ONLY MODE (no resource finder / experiments / paper writer)
+        if quality_only:
+            print()
+            print("📊 QUALITY-ONLY MODE")
+            print("   Running quality evaluation on existing workspace artifacts...")
+            quality = self._run_quality_evaluation(work_dir, idea)
+            success = quality is not None
+            self._finalize_research(idea_id, work_dir, github_url, title, provider, success)
+            return {
+                'work_dir': work_dir,
+                'github_url': github_url,
+                'success': success
+            }
+
         # Choose execution mode: multi-agent pipeline or legacy monolithic
+        quality_generated = False
         if multi_agent:
             print()
             print("🔀 Using MULTI-AGENT pipeline")
@@ -332,6 +355,36 @@ class ResearchRunner:
 
                     if paper_result.get('success'):
                         print(f"\n✅ Paper generated: {paper_result['draft_dir']}/main.tex")
+
+                        if revise_paper_from_review:
+                            print()
+                            print("=" * 80)
+                            print("🔎 STAGE 4: Reviewer Feedback + Paper Revision")
+                            print("=" * 80)
+                            print()
+
+                            # First pass: generate reviewer report from current draft
+                            quality_before = self._run_quality_evaluation(work_dir, idea)
+                            if quality_before is not None:
+                                quality_generated = True
+
+                            from agents.paper_writer import run_paper_revision_from_quality_report
+                            revision_result = run_paper_revision_from_quality_report(
+                                work_dir=work_dir,
+                                provider=provider,
+                                style=paper_style,
+                                timeout=paper_revision_timeout,
+                                full_permissions=full_permissions,
+                            )
+
+                            if revision_result.get("success"):
+                                print("\n✅ Paper revision completed using reviewer feedback.")
+                                # Second pass: regenerate report after revision
+                                quality_after = self._run_quality_evaluation(work_dir, idea)
+                                if quality_after is not None:
+                                    quality_generated = True
+                            else:
+                                print("\n⚠️  Paper revision failed (keeping original paper draft).")
                     else:
                         print(f"\n⚠️  Paper generation failed (research still succeeded)")
 
@@ -340,6 +393,10 @@ class ResearchRunner:
                 success = False
                 # Don't raise - let finally block handle cleanup
             finally:
+                if not quality_generated:
+                    quality = self._run_quality_evaluation(work_dir, idea)
+                    if quality is not None:
+                        quality_generated = True
                 # GitHub integration and status updates
                 self._finalize_research(idea_id, work_dir, github_url, title, provider, success)
 
@@ -434,6 +491,9 @@ class ResearchRunner:
             print("=" * 80)
             print()
 
+            display = LiveStreamDisplay(stage="experiment_runner", work_dir=work_dir)
+            display.start()
+
             with open(log_file, 'w') as log_f:
                 # Start process in workspace directory
                 process = subprocess.Popen(
@@ -455,8 +515,8 @@ class ResearchRunner:
                 for line in iter(process.stdout.readline, ''):
                     if line:
                         sanitized_line = sanitize_text(line)
-                        print(sanitized_line, end='')
                         log_f.write(sanitized_line)
+                        display.consume_line(sanitized_line)
 
                 # Wait for completion
                 return_code = process.wait(timeout=timeout)
@@ -482,6 +542,12 @@ class ResearchRunner:
             raise
 
         finally:
+            if 'display' in locals():
+                display.stop()
+            if not quality_generated:
+                quality = self._run_quality_evaluation(work_dir, idea)
+                if quality is not None:
+                    quality_generated = True
             # Commit and push to GitHub if enabled
             if self.use_github and self.github_manager:
                 try:
@@ -673,9 +739,9 @@ https://github.com/ChicagoHAI/idea-explorer
             for skill_dir in skills_src.iterdir():
                 if skill_dir.is_dir():
                     dst_skill_dir = skills_dst / skill_dir.name
-                    if dst_skill_dir.exists():
-                        shutil.rmtree(dst_skill_dir)
-                    shutil.copytree(skill_dir, dst_skill_dir)
+                    # Merge instead of delete+copy to avoid occasional rmtree failures
+                    # on mounted workspaces with concurrently touched directories.
+                    shutil.copytree(skill_dir, dst_skill_dir, dirs_exist_ok=True)
             print(f"   Copied Claude Code skills to .claude/skills/")
 
         # Copy skills to .gemini/skills/ for Gemini support
@@ -685,9 +751,7 @@ https://github.com/ChicagoHAI/idea-explorer
             for skill_dir in skills_src.iterdir():
                 if skill_dir.is_dir():
                     dst_skill_dir = gemini_skills_dst / skill_dir.name
-                    if dst_skill_dir.exists():
-                        shutil.rmtree(dst_skill_dir)
-                    shutil.copytree(skill_dir, dst_skill_dir)
+                    shutil.copytree(skill_dir, dst_skill_dir, dirs_exist_ok=True)
             print(f"   Copied skills to .gemini/skills/")
 
         # Copy skills to .codex/skills/ for Codex support
@@ -697,9 +761,7 @@ https://github.com/ChicagoHAI/idea-explorer
             for skill_dir in skills_src.iterdir():
                 if skill_dir.is_dir():
                     dst_skill_dir = codex_skills_dst / skill_dir.name
-                    if dst_skill_dir.exists():
-                        shutil.rmtree(dst_skill_dir)
-                    shutil.copytree(skill_dir, dst_skill_dir)
+                    shutil.copytree(skill_dir, dst_skill_dir, dirs_exist_ok=True)
             print(f"   Copied skills to .codex/skills/")
 
         # Add/merge .gitignore for research workspace
@@ -800,10 +862,31 @@ https://github.com/ChicagoHAI/idea-explorer
         self.idea_manager.update_status(idea_id, 'completed')
 
         print()
-        print(f"✅ Research completed!")
+        if success:
+            print("✅ Research completed successfully!")
+        else:
+            print("⚠️  Research completed with issues.")
         print(f"   Location: {work_dir}")
         if github_url:
             print(f"   GitHub: {github_url}")
+
+    def _run_quality_evaluation(self, work_dir: Path, idea: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Evaluate run artifacts and emit quality_report.md in workspace root.
+
+        The report is generated before git commit so it gets pushed with results.
+        """
+        try:
+            print()
+            print("📊 Running quality evaluation...")
+            evaluator = QualityEvaluator(work_dir=work_dir, idea=idea)
+            quality = evaluator.evaluate()
+            print(f"   ✓ quality_report.md generated")
+            print(f"   ✓ Score: {quality.get('total_score', 0)}/100")
+            return quality
+        except Exception as e:
+            print(f"   ⚠️  Quality evaluation failed: {e}")
+            return None
 
 
 def main():
@@ -877,6 +960,11 @@ def main():
         help="Use legacy monolithic agent (single agent for all phases including literature review)"
     )
     parser.add_argument(
+        "--quality-only",
+        action="store_true",
+        help="Only regenerate quality_report.md from existing workspace and push results"
+    )
+    parser.add_argument(
         "--pause-after-resources",
         action="store_true",
         help="Pause for human review after resource finding stage (only with multi-agent mode)"
@@ -915,12 +1003,26 @@ def main():
         help="Timeout for paper writing in seconds (default: 3600 = 60 min)"
     )
     parser.add_argument(
+        "--revise-paper-from-review",
+        action="store_true",
+        help="After --write-paper, run reviewer-guided revision pass on paper_draft/main.tex"
+    )
+    parser.add_argument(
+        "--paper-revision-timeout",
+        type=int,
+        default=2400,
+        help="Timeout for reviewer-guided paper revision in seconds (default: 2400 = 40 min)"
+    )
+    parser.add_argument(
         "--comment-mode",
         action="store_true",
         help="Run in comment mode: make targeted improvements based on comments in the idea file"
     )
 
     args = parser.parse_args()
+
+    if args.revise_paper_from_review and not args.write_paper:
+        parser.error("--revise-paper-from-review requires --write-paper")
 
     runner = ResearchRunner(
         use_github=not args.no_github,
@@ -957,20 +1059,26 @@ def main():
             timeout=args.timeout,
             full_permissions=args.full_permissions,
             multi_agent=not args.legacy_mode,
+            quality_only=args.quality_only,
             pause_after_resources=args.pause_after_resources,
             skip_resource_finder=args.skip_resource_finder,
             resource_finder_timeout=args.resource_finder_timeout,
             use_scribe=args.use_scribe,
             write_paper=args.write_paper,
+            revise_paper_from_review=args.revise_paper_from_review,
             paper_style=args.paper_style,
             paper_timeout=args.paper_timeout,
+            paper_revision_timeout=args.paper_revision_timeout,
             no_hash=args.no_hash,
             private=args.private
         )
 
         print()
         print("=" * 80)
-        print("SUCCESS! Research execution completed.")
+        if result.get('success'):
+            print("SUCCESS! Research execution completed.")
+        else:
+            print("COMPLETED WITH ISSUES")
         print(f"Location: {result['work_dir']}")
         if result.get('github_url'):
             print(f"GitHub: {result['github_url']}")

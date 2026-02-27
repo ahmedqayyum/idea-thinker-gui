@@ -58,7 +58,6 @@ ENV/
 # Research outputs (keep in workspace and GitHub repos)
 runs/
 workspace/
-workspaces/
 notebooks/
 logs/
 
